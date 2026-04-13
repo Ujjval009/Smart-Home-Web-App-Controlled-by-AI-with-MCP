@@ -83,3 +83,8 @@ python -m ai.ai_client --direct
 ## License
 
 MIT
+
+## Author
+
+Ujjval Sharma
+
