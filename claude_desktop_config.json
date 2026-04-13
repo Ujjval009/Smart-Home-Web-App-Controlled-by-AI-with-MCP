@@ -1,0 +1,15 @@
+{
+  "preferences": {
+    "coworkScheduledTasksEnabled": false,
+    "ccdScheduledTasksEnabled": false,
+    "coworkWebSearchEnabled": true,
+    "sidebarMode": "chat"
+  },
+  "mcpServers": {
+    "smart-home": {
+      "command": "python",
+      "args": ["-m", "mcp_server.server"],
+      "cwd": "/home/arise/projects/home_automation_mcp_server"
+    }
+  }
+}
