@@ -1,0 +1,292 @@
+# 🏠 Smart Home MCP System — Architecture Guide
+
+## System Architecture Overview
+
+```mermaid
+graph LR
+    A["👤 User"] -->|Natural Language| B["🤖 AI Model<br/>(Claude/GPT)"]
+    B -->|MCP Protocol| C["🔌 MCP Server<br/>(FastMCP)"]
+    C -->|HTTP Calls| D["⚡ FastAPI<br/>Backend"]
+    D -->|SQL Queries| E["🗄️ SQLite<br/>Database"]
+    D -->|WebSocket| F["🖥️ Frontend<br/>(Web App)"]
+    F -->|User Actions| D
+```
+
+### Core Data Flow
+
+```
+User says: "Turn on the living room lights"
+    ↓
+AI Model interprets intent → tool: turn_on_device(device_id=1)
+    ↓
+MCP Server receives tool call → HTTP POST to FastAPI
+    ↓
+FastAPI updates SQLite → broadcasts via WebSocket
+    ↓
+Frontend receives update → UI reflects new state
+```
+
+---
+
+## 📁 Folder Structure
+
+```
+home_automation_mcp_server/
+├── ai/                          # AI integration layer
+│   ├── __init__.py
+│   └── ai_client.py            # Example AI → MCP interaction
+│
+├── mcp_server/                  # MCP Server (FastMCP)
+│   ├── __init__.py
+│   └── server.py               # Tool definitions + API mapping
+│
+├── backend/                     # FastAPI backend
+│   ├── __init__.py
+│   ├── main.py                  # App entry point + CORS + lifespan
+│   ├── routes/
+│   │   ├── __init__.py
+│   │   ├── devices.py           # REST endpoints for devices
+│   │   └── websocket.py         # WebSocket handler
+│   └── models.py                # Pydantic models (request/response)
+│
+├── database/                    # Database layer
+│   ├── __init__.py
+│   ├── schema.py                # Schema creation + initialization
+│   └── crud.py                  # CRUD operations
+│
+├── frontend/                    # Web UI
+│   ├── index.html               # Main HTML page
+│   ├── style.css                # Styling
+│   └── app.js                   # JavaScript logic + WebSocket
+│
+├── shared/                      # Shared utilities
+│   ├── __init__.py
+│   └── config.py                # Central configuration
+│
+├── requirements.txt             # Python dependencies
+├── run.py                       # Single script to start everything
+└── README.md                    # Project documentation
+```
+
+### Folder Explanations
+
+| Folder | Purpose |
+|--------|---------|
+| `ai/` | Contains the AI client that demonstrates how an AI model calls MCP tools. This is the "brain" of the system. |
+| `mcp_server/` | The MCP server acts as a **bridge** — it translates AI tool calls into HTTP requests to the backend. Think of it as a translator between AI and your API. |
+| `backend/` | The FastAPI server handles all business logic, validation, and real-time communication. It's the "muscles" that actually do the work. |
+| `database/` | SQLite operations are isolated here. This separation means you can swap databases later without touching business logic. |
+| `frontend/` | A lightweight web UI that shows device states and allows manual control. Uses vanilla HTML/CSS/JS for simplicity. |
+| `shared/` | Configuration and utilities shared across all components. Prevents magic strings and duplicated constants. |
+
+---
+
+## Component Deep Dives
+
+### 1. 🤖 AI Layer (`ai/`)
+
+**WHAT:** A client that sends natural language to an AI model and processes the MCP tool calls it returns.
+
+**WHY:** The AI model is the "brain" — it understands human intent ("turn on lights") and converts it to structured tool calls (`turn_on_device(device_id=1)`). Without this, users would need to manually call API endpoints.
+
+**HOW it works internally:**
+1. User provides a natural language command
+2. The AI model receives the command + a list of available MCP tools
+3. The model decides which tool to call and with what arguments
+4. The MCP client executes the tool call against the MCP server
+5. The result is returned to the AI, which formulates a human-readable response
+
+**WHEN to use:** When you want natural language control of devices, or when building a chatbot/voice assistant interface.
+
+**WHEN NOT to use:** For direct device control (use the REST API instead), or when latency is critical (AI adds 1-3 seconds).
+
+---
+
+### 2. 🔌 MCP Server (`mcp_server/`)
+
+**WHAT:** A FastMCP server that exposes smart home operations as "tools" that AI models can call.
+
+**WHY:** MCP (Model Context Protocol) is a standard protocol by Anthropic for connecting AI models to external systems. It provides a clean, typed interface that AI models understand natively.
+
+**HOW it works internally:**
+1. Tools are registered with FastMCP using decorators (`@mcp.tool()`)
+2. Each tool has a name, description, and typed parameters
+3. When the AI calls a tool, FastMCP validates the input and runs the handler
+4. The handler makes an HTTP request to the FastAPI backend
+5. The response is returned to the AI model
+
+**WHEN to use:** When integrating AI models with your backend. MCP is the standard way to give AI models "hands" to interact with the world.
+
+**WHEN NOT to use:** For direct frontend-to-backend communication (use REST/WebSocket instead). MCP adds overhead that's only justified when an AI is in the loop.
+
+---
+
+### 3. ⚡ FastAPI Backend (`backend/`)
+
+**WHAT:** An ASGI web server that handles HTTP requests, WebSocket connections, and business logic.
+
+**WHY:** FastAPI provides automatic validation, OpenAPI docs, async support, and WebSocket handling — all crucial for a real-time smart home system.
+
+**HOW it works internally:**
+1. Receives HTTP requests (from MCP server or frontend)
+2. Validates input using Pydantic models
+3. Executes business logic (state changes, validation)
+4. Updates the SQLite database via CRUD functions
+5. Broadcasts state changes to all WebSocket clients
+6. Returns structured JSON responses
+
+**WHEN to use:** For any server that needs REST APIs + real-time updates + automatic documentation.
+
+**WHEN NOT to use:** For simple scripts (overkill), for CPU-heavy processing (use background workers), or when you need a full Django-style ORM (use Django instead).
+
+---
+
+### 4. 🗄️ SQLite Database (`database/`)
+
+**WHAT:** A file-based SQL database that stores device states and action history.
+
+**WHY:** SQLite requires zero setup, needs no separate server, and is perfect for single-server smart home systems. It stores data in a single file (`smart_home.db`).
+
+**HOW it works internally:**
+1. On startup, the schema is created if it doesn't exist (`CREATE TABLE IF NOT EXISTS`)
+2. CRUD functions use parameterized queries to prevent SQL injection
+3. All operations are synchronous (wrapped with `aiosqlite` for async FastAPI)
+4. The database file persists between restarts
+
+**WHEN to use:** For development, prototyping, single-user systems, and small-scale deployments (< 100 concurrent users).
+
+**WHEN NOT to use:** For multi-server deployments (use PostgreSQL), for high write throughput (> 1000 writes/sec), or when you need user authentication (add a proper auth system).
+
+---
+
+### 5. 🖥️ Frontend (`frontend/`)
+
+**WHAT:** A single-page web application that displays device states and allows manual control.
+
+**WHY:** Provides a visual interface for monitoring and controlling devices without needing to use the AI or API directly.
+
+**HOW it works internally:**
+1. On page load, fetches all devices via REST API
+2. Establishes a WebSocket connection for real-time updates
+3. Renders device cards with toggle buttons
+4. When a toggle is clicked, sends a REST request to update the device
+5. WebSocket receives the broadcast and updates the UI without polling
+
+**WHEN to use:** For dashboards, monitoring panels, and direct user control.
+
+**WHEN NOT to use:** When you only need AI/voice control (skip the frontend), or when building a mobile app (use React Native instead).
+
+---
+
+## 🐛 Debugging Guide
+
+### Error Classification
+
+| Category | Examples | How to Fix |
+|----------|----------|------------|
+| **Environment** | Missing packages, wrong Python version, port conflicts | Check `requirements.txt`, use `python3 --version`, check `lsof -i :8000` |
+| **API/Auth** | 404 Not Found, CORS errors, 422 Validation Error | Check URL paths, CORS origins, request body format |
+| **Logic** | Device not updating, wrong state, missing broadcasts | Add logging, check database directly, verify WebSocket connections |
+| **Dependency** | Import errors, version conflicts, missing modules | Use virtual env, pin versions, check `pip list` |
+
+### Common Failure Points
+
+#### 1. MCP Tool Not Triggering
+```
+Symptom: AI says "I'll turn on the lights" but nothing happens
+Causes:
+  - MCP server not running
+  - Tool name mismatch between AI config and server
+  - Network connectivity between AI and MCP server
+Fix: Check MCP server logs, verify tool registration, test with curl
+```
+
+#### 2. API Not Responding
+```
+Symptom: Frontend shows "Connection Error" or MCP tool returns error
+Causes:
+  - FastAPI not running (check terminal for errors)
+  - Wrong port (default is 8000)
+  - CORS not configured for frontend origin
+Fix: Run `python -m backend.main`, check http://localhost:8000/docs
+```
+
+#### 3. WebSocket Disconnecting
+```
+Symptom: Frontend stops receiving updates, shows "Disconnected"
+Causes:
+  - Server restart (WebSocket connections don't survive restarts)
+  - Network timeout (no heartbeat)
+  - Too many connections (OS file descriptor limit)
+Fix: Implement auto-reconnect (included in our frontend code), add ping/pong
+```
+
+#### 4. Database Not Syncing
+```
+Symptom: API returns stale data, changes disappear after restart
+Causes:
+  - Using in-memory DB instead of file (check connection string)
+  - Transaction not committed
+  - Multiple processes fighting over SQLite lock
+Fix: Use file-based DB, ensure commits, use WAL mode for concurrent reads
+```
+
+### Common Beginner Mistakes
+
+> [!WARNING]
+> **Mistake 1:** Forgetting `await` on async functions
+> ```python
+> # ❌ WRONG - returns a coroutine object, not the result
+> devices = get_all_devices()
+> 
+> # ✅ CORRECT
+> devices = await get_all_devices()
+> ```
+
+> [!WARNING]
+> **Mistake 2:** Hardcoding URLs instead of using config
+> ```python
+> # ❌ WRONG - breaks when you change ports
+> response = requests.get("http://localhost:8000/api/devices")
+> 
+> # ✅ CORRECT - uses central config
+> response = requests.get(f"{config.BACKEND_URL}/api/devices")
+> ```
+
+> [!WARNING]
+> **Mistake 3:** Not handling WebSocket disconnections
+> ```javascript
+> // ❌ WRONG - connection dies silently
+> const ws = new WebSocket("ws://localhost:8000/ws");
+> 
+> // ✅ CORRECT - auto-reconnect on close
+> function connect() {
+>     const ws = new WebSocket("ws://localhost:8000/ws");
+>     ws.onclose = () => setTimeout(connect, 3000);
+> }
+> ```
+
+> [!WARNING]
+> **Mistake 4:** SQL Injection vulnerability
+> ```python
+> # ❌ WRONG - SQL injection risk!
+> cursor.execute(f"SELECT * FROM devices WHERE id = {device_id}")
+> 
+> # ✅ CORRECT - parameterized query
+> cursor.execute("SELECT * FROM devices WHERE id = ?", (device_id,))
+> ```
+
+---
+
+## 🚀 Production Considerations
+
+For a real production deployment, you would add:
+
+1. **Authentication** — JWT tokens or OAuth2 for API access
+2. **PostgreSQL** — Replace SQLite for multi-server deployments
+3. **Redis** — For WebSocket pub/sub across multiple workers
+4. **Docker** — Containerize each component
+5. **Rate Limiting** — Prevent API abuse
+6. **Logging** — Structured logging with correlation IDs
+7. **Monitoring** — Prometheus metrics + Grafana dashboards
+8. **HTTPS** — TLS termination via reverse proxy (Nginx/Caddy)
