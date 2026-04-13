@@ -1,0 +1,1 @@
+# Smart-Home-Web-App-Controlled-by-AI-with-MCP
