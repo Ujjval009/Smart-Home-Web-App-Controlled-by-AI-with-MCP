@@ -82,7 +82,7 @@ python -m ai.ai_client --direct
 
 ## License
 
-MIT
+MIT LICENSE
 
 ## Author
 
